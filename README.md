@@ -58,3 +58,9 @@ Dump the whole NAND
 ```
 
 
+
+## Example
+
+`python -m bcm_cfedump -D /dev/ttyACM0 -O nand.img -t 0.01 nand`
+
+Dumps entire NAND to `nand.img`. The difference between `nand` and `nand_bulk` is that `nand` reads one page at a time, retrying if errors are detected; `nand_bulk` requests all the pages at a time and is not able to recover from errors.
