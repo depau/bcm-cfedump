@@ -259,11 +259,11 @@ class CFECommunicator:
             yield from self.read_block(block)
 
     def read_nand(self) -> Generator[bytes, None, None]:
-        for block in range(NAND_SIZE // BLOCK_SIZE):
+        for block in range(self.nand_size // self.block_size):
             yield from self.read_block(block)
 
     def read_nand_bulk(self) -> Generator[bytes, None, None]:
-        yield from self.read_pages_bulk(0, 0, NAND_SIZE // PAGE_SIZE)
+        yield from self.read_pages_bulk(0, 0, self.nand_size // self.page_size)
 
 
 def main():
