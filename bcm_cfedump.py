@@ -51,7 +51,7 @@ def format_time(time: int) -> str:
 
     m = time % 60
     time //= 60
-    if time < 60:
+    if time < 24:
         return "{}h {}m {}s".format(time, m, s)
 
     h = time % 24
