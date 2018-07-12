@@ -307,7 +307,7 @@ def main():
     if args.command == 'page':
         gen = c.read_pages(args.block, args.page, args.number)
         pages = args.number
-    if args.command == 'pages_bulk':
+    elif args.command == 'pages_bulk':
         gen = c.read_pages_bulk(args.block, args.page, args.number)
         pages = args.number
     elif args.command == 'block':
