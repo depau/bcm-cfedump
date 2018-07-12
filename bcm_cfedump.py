@@ -159,7 +159,7 @@ class CFECommunicator:
     def wait_for_prompt(self) -> None:
         self.printer.msg("Waiting for a prompt...")
         while True:
-            self.ser.write(b"\x03")
+            self.ser.write(b"\r\n")
             if self.ser.read(1) == b'C' and self.ser.read(1) == b'F' \
                     and self.ser.read(1) == b'E' and self.ser.read(1) == b'>':
                 self.eat_junk()
