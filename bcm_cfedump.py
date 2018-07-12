@@ -30,7 +30,7 @@ def parse_serial_line(line: str) -> Generator[bytes, None, None]:
 
 
 def format_size(size: int) -> str:
-    units = ('K', 'M', 'G', 'T')
+    units = ('', 'K', 'M', 'G', 'T')
     count = 0
 
     while size > 1500:
