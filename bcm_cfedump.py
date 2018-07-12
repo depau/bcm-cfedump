@@ -165,6 +165,32 @@ class CFECommunicator:
                 self.eat_junk()
                 return
 
+    def parse_pages_bulk(self) -> Generator[bytes, None, None]:
+        while not self.ser.readline().startswith(b"-----"):
+            pass
+        buf = b''
+
+        while True:
+            line = self.ser.readline().strip()
+
+            if len(line) == 0:
+                continue
+
+            # Spare area. Yield and skip to next page
+            if line.startswith(b"-----"):
+                yield buf
+                buf = b''
+
+                while not self.ser.readline().startswith(b"-----"):
+                    pass
+                continue
+
+            try:
+                for b in parse_serial_line(line.decode()):
+                    buf += b
+            except UnicodeDecodeError:
+                traceback.print_exc()
+
     def read_page(self, block: int, page: int) -> bytes:
         buf = b''
         main_area_read = False
@@ -213,6 +239,10 @@ class CFECommunicator:
             else:
                 raise IOError("Max number of page read retries exceeded")
 
+    def read_pages_bulk(self, block: int, page_start: int, number: int) -> Generator[bytes, None, None]:
+        self.ser.write("dn {block} {page} {number}\r\n".format(block=block, page=page_start, number=number).encode())
+        yield from self.parse_pages_bulk()
+
     def read_block(self, block: int) -> Generator[bytes, None, None]:
         count = 0
         for i in self.read_pages(block, 0, self.block_size // self.page_size):
@@ -231,6 +261,9 @@ class CFECommunicator:
     def read_nand(self) -> Generator[bytes, None, None]:
         for block in range(NAND_SIZE // BLOCK_SIZE):
             yield from self.read_block(block)
+
+    def read_nand_bulk(self) -> Generator[bytes, None, None]:
+        yield from self.read_pages_bulk(0, 0, NAND_SIZE // PAGE_SIZE)
 
 
 def main():
@@ -252,12 +285,19 @@ def main():
     readpage_parser.add_argument('number', type=int, help="Number of subsequent pages to read (if more than 1)",
                                  default=1)
 
+    readpage_parser = subparsers.add_parser('pages_bulk', help="Read one or more pages in bulk")
+    readpage_parser.add_argument('block', type=int, help="Block to read pages from")
+    readpage_parser.add_argument('page', type=int, help="Page to read")
+    readpage_parser.add_argument('number', type=int, help="Number of subsequent pages to read (if more than 1)",
+                                 default=1)
+
     readblock_parser = subparsers.add_parser('block', help="Read one or more blocks")
     readblock_parser.add_argument('block', type=int, help="Block to read")
     readblock_parser.add_argument('number', type=int, help="Number of subsequent blocks to read (if more than 1)",
                                   default=1)
 
     subparsers.add_parser('nand', help="Read the entire NAND")
+    subparsers.add_parser('nand_bulk', help="Read the entire NAND in bulk")
 
     args = parser.parse_args()
     printer = ProgressPrinter(sys.stdout if args.output != "-" else sys.stderr, args.page_size, "pages")
@@ -267,11 +307,17 @@ def main():
     if args.command == 'page':
         gen = c.read_pages(args.block, args.page, args.number)
         pages = args.number
+    if args.command == 'pages_bulk':
+        gen = c.read_pages_bulk(args.block, args.page, args.number)
+        pages = args.number
     elif args.command == 'block':
         gen = c.read_blocks(args.block, args.number)
         pages = args.block_size // args.page_size * args.number
     elif args.command == 'nand':
         gen = c.read_nand()
+        pages = args.nand_size // args.page_size
+    elif args.command == 'nand_bulk':
+        gen = c.read_nand_bulk()
         pages = args.nand_size // args.page_size
     else:
         raise RuntimeError
@@ -287,6 +333,7 @@ def main():
             printer.print_progress(pages_read, pages)
 
     printer.print("\n\n")
+
 
 if __name__ == "__main__":
     main()
