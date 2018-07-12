@@ -208,6 +208,7 @@ class CFECommunicator:
                     break
                 except Exception:
                     print("Block {} page {} read failed, retrying.".format(block, page))
+                    retries += 1
                     self.printer.exc()
             else:
                 raise IOError("Max number of page read retries exceeded")
