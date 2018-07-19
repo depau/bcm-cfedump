@@ -327,10 +327,15 @@ def main():
     c.wait_for_prompt()
 
     with open(args.output, 'wb') as output:
-        for page in gen:
-            pages_read += 1
-            output.write(page)
+        try:
+            for page in gen:
+                pages_read += 1
+                output.write(page)
+                if type(c) == CFECommunicator or pages_read % 100 == 0:
+                    printer.print_progress(pages_read, pages)
+        except Exception:
             printer.print_progress(pages_read, pages)
+            raise
 
     printer.print("\n\n")
 
