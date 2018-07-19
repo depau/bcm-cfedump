@@ -25,8 +25,12 @@ def parse_hex_byte_string(hexbytes: str) -> bytes:
 def parse_serial_line(line: str) -> Generator[bytes, None, None]:
     m = line_regex.match(line)
 
-    for chunk in m.group('data').split():
-        yield parse_hex_byte_string(chunk)
+    try:
+        for chunk in m.group('data').split():
+            yield parse_hex_byte_string(chunk)
+    except Exception:
+        print("\n\nError caused by line: '{}'".format(line))
+        raise
 
 
 def format_size(size: int) -> str:
