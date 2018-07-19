@@ -14,7 +14,7 @@ NAND_SIZE = 524288 * 1024
 BLOCK_SIZE = 128 * 1024
 PAGE_SIZE = 2048
 
-line_regex = re.compile(r'(?P<addr>[0-9a-fA-F]{8}):(?P<data>(?: [0-9a-fA-F]{8}){4})\s+.{16}')
+line_regex = re.compile(r'(?P<addr>[0-9a-fA-F]{8}):(?P<data>(?: [0-9a-fA-F]{8}){4})(?:\s+.{16})?')
 
 
 def parse_hex_byte_string(hexbytes: str) -> bytes:
