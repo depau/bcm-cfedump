@@ -5,7 +5,8 @@ import re
 import sys
 import time
 import traceback
-from typing import Generator, TextIO
+from functools import wraps
+from typing import Generator, TextIO, BinaryIO
 
 import serial
 
@@ -61,6 +62,20 @@ def format_time(time: int) -> str:
     h = time % 24
     time //= 24
     return "{}d {}h {}m {}s".format(time, h, m, s)
+
+
+def print_offset_on_exc(gen):
+    @wraps(gen)
+    def wrapper(self, *a, **kw):
+        try:
+            yield from gen(self, *a, **kw)
+        except Exception as e:
+            if not getattr(e, "offset_printed", None):
+                print("Error at offset {} in file".format(self.input_file.tell()))
+                e.offset_printed = True
+            raise e
+
+    return wrapper
 
 
 class PrettyPrinter:
@@ -145,37 +160,38 @@ class ProgressPrinter(PrettyPrinter):
         self.print(string)
 
 
-class CFECommunicator:
-    # noinspection PyShadowingNames
-    def __init__(self, serial: serial.Serial, block_size: int = BLOCK_SIZE, page_size: int = PAGE_SIZE,
-                 nand_size: int = NAND_SIZE, max_retries: int = MAX_RETRIES, printer: PrettyPrinter = None):
+class CFEParserBase:
+    def __init__(self, printer: PrettyPrinter, block_size: int = BLOCK_SIZE, page_size: int = PAGE_SIZE,
+                 nand_size: int = NAND_SIZE, max_retries: int = MAX_RETRIES):
+        self.printer = printer
         self.max_retries = max_retries
         self.block_size = block_size
         self.page_size = page_size
         self.nand_size = nand_size
-        self.ser = serial
-        self.printer = printer or PrettyPrinter(sys.stdout)
+
+    def _read(self, *a, **kw) -> bytes:
+        raise NotImplementedError
+
+    def _write(self, *a, **kw) -> int:
+        raise NotImplementedError
+
+    def _readline(self, *a, **kw) -> bytes:
+        raise NotImplementedError
+
+    def wait_for_prompt(self):
+        raise NotImplementedError
 
     def eat_junk(self) -> None:
-        while self.ser.read(1):
+        while self._read(1):
             pass
 
-    def wait_for_prompt(self) -> None:
-        self.printer.msg("Waiting for a prompt...")
-        while True:
-            self.ser.write(b"\r\n")
-            if self.ser.read(1) == b'C' and self.ser.read(1) == b'F' \
-                    and self.ser.read(1) == b'E' and self.ser.read(1) == b'>':
-                self.eat_junk()
-                return
-
     def parse_pages_bulk(self) -> Generator[bytes, None, None]:
-        while not self.ser.readline().startswith(b"-----"):
+        while not self._readline().startswith(b"-----"):
             pass
         buf = b''
 
         while True:
-            line = self.ser.readline().strip()
+            line = self._readline().strip()
 
             if len(line) == 0:
                 continue
@@ -185,7 +201,7 @@ class CFECommunicator:
                 yield buf
                 buf = b''
 
-                while not self.ser.readline().startswith(b"-----"):
+                while not self._readline().startswith(b"-----"):
                     pass
                 continue
 
@@ -199,17 +215,16 @@ class CFECommunicator:
         buf = b''
         main_area_read = False
 
-        self.ser.write("dn {block} {page} 1\r\n".format(block=block, page=page).encode())
-        self.ser.readline()  # remove echo
+        self._read("dn {block} {page} 1\r\n".format(block=block, page=page).encode())
+
+        while not self._readline().startswith(b"-----"):
+            pass
 
         while True:
-            line = self.ser.readline().strip()
+            line = self._readline().strip()
 
             if line.startswith(b"-----"):
-                if main_area_read:
-                    break
-                main_area_read = True
-                continue
+                break
 
             if len(line) == 0:
                 continue
@@ -244,7 +259,7 @@ class CFECommunicator:
                 raise IOError("Max number of page read retries exceeded")
 
     def read_pages_bulk(self, block: int, page_start: int, number: int) -> Generator[bytes, None, None]:
-        self.ser.write("dn {block} {page} {number}\r\n".format(block=block, page=page_start, number=number).encode())
+        self._write("dn {block} {page} {number}\r\n".format(block=block, page=page_start, number=number).encode())
         yield from self.parse_pages_bulk()
 
     def read_block(self, block: int) -> Generator[bytes, None, None]:
@@ -270,16 +285,96 @@ class CFECommunicator:
         yield from self.read_pages_bulk(0, 0, self.nand_size // self.page_size)
 
 
+class CFECommunicator(CFEParserBase):
+    # noinspection PyShadowingNames
+    def __init__(self, serial: serial.Serial, block_size: int = BLOCK_SIZE, page_size: int = PAGE_SIZE,
+                 nand_size: int = NAND_SIZE, max_retries: int = MAX_RETRIES, printer: PrettyPrinter = None):
+        super().__init__(printer, block_size, page_size, nand_size, max_retries)
+        self.ser = serial
+
+    def _read(self, *a, **kw) -> bytes:
+        return self.ser.read(*a, **kw)
+
+    def _write(self, *a, **kw) -> int:
+        return self.ser.write(*a, **kw)
+
+    def _readline(self, *a, **kw) -> bytes:
+        return self.ser.readline(*a, **kw)
+
+    def wait_for_prompt(self) -> None:
+        self.printer.msg("Waiting for a prompt...")
+        while True:
+            self._read(b"\r\n")
+            if self._read(1) == b'C' and self._read(1) == b'F' \
+                    and self._read(1) == b'E' and self._read(1) == b'>':
+                self.eat_junk()
+                return
+
+
+class CFEParser(CFEParserBase):
+    def __init__(self, input_file: BinaryIO, block_size: int = BLOCK_SIZE, page_size: int = PAGE_SIZE,
+                 nand_size: int = NAND_SIZE, max_retries: int = MAX_RETRIES, printer: PrettyPrinter = None):
+        super().__init__(printer, block_size, page_size, nand_size, max_retries)
+        self.input_file = input_file
+
+    def _read(self, *a, **kw) -> bytes:
+        return self.input_file.read(*a, **kw)
+
+    def _write(self, *a, **kw) -> int:
+        return 0
+
+    def _readline(self, *a, **kw) -> bytes:
+        return self.input_file.readline(*a, **kw)
+
+    def wait_for_prompt(self) -> None:
+        pass
+
+    @print_offset_on_exc
+    def parse_pages_bulk(self) -> Generator[bytes, None, None]:
+        return super().parse_pages_bulk()
+
+    @print_offset_on_exc
+    def read_page(self, block: int, page: int) -> bytes:
+        return super().read_page(block, page)
+
+    @print_offset_on_exc
+    def read_pages(self, block: int, page_start: int, number: int) -> Generator[bytes, None, None]:
+        return super().read_pages(block, page_start, number)
+
+    @print_offset_on_exc
+    def read_pages_bulk(self, block: int, page_start: int, number: int) -> Generator[bytes, None, None]:
+        return super().read_pages_bulk(block, page_start, number)
+
+    @print_offset_on_exc
+    def read_block(self, block: int) -> Generator[bytes, None, None]:
+        return super().read_block(block)
+
+    @print_offset_on_exc
+    def read_blocks(self, block: int, number: int) -> Generator[bytes, None, None]:
+        return super().read_blocks(block, number)
+
+    @print_offset_on_exc
+    def read_nand(self) -> Generator[bytes, None, None]:
+        return super().read_nand()
+
+    @print_offset_on_exc
+    def read_nand_bulk(self) -> Generator[bytes, None, None]:
+        return super().read_nand_bulk()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Broadcom CFE dumper")
     parser.add_argument('-N', '--nand-size', type=int, help="NAND size", default=NAND_SIZE)
     parser.add_argument('-B', '--block-size', type=int, help="Block size", default=BLOCK_SIZE)
     parser.add_argument('-P', '--page-size', type=int, help="Page size", default=PAGE_SIZE)
-    parser.add_argument('-D', '--device', type=str, help="Serial port", required=True)
     parser.add_argument('-b', '--baudrate', type=str, help="Baud rate", default=115200)
     parser.add_argument('-t', '--timeout', type=float, help="Serial port timeout", default=0.1)
     parser.add_argument('-O', '--output', type=str, help="Output file, '-' for stdout", default='-')
     parser.add_argument('-r', '--max-retries', type=int, help="Max retries per page on failure", default=MAX_RETRIES)
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-D', '--device', type=str, help="Serial port")
+    group.add_argument('-i', '--input-file', type=str, help="Input file")
 
     subparsers = parser.add_subparsers(help="Available commands", dest='command')
 
@@ -305,8 +400,15 @@ def main():
 
     args = parser.parse_args()
     printer = ProgressPrinter(sys.stdout if args.output != "-" else sys.stderr, args.page_size, "pages")
-    ser = serial.Serial(args.device, args.baudrate, timeout=args.timeout)
-    c = CFECommunicator(ser, args.block_size, args.page_size, args.nand_size, args.max_retries, printer)
+
+    if getattr(args, "device", None):
+        ser = serial.Serial(args.device, args.baudrate, timeout=args.timeout)
+        c = CFECommunicator(ser, args.block_size, args.page_size, args.nand_size, args.max_retries, printer)
+    elif getattr(args, "input_file", None):
+        ser = open(args.input_file, 'rb')
+        c = CFEParser(ser, args.block_size, args.page_size, args.nand_size, args.max_retries, printer)
+    else:
+        raise ValueError("Please provide an input")
 
     if args.command == 'page':
         gen = c.read_pages(args.block, args.page, args.number)
