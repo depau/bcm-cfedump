@@ -23,12 +23,16 @@ def parse_hex_byte_string(hexbytes: str) -> bytes:
     return int(hexbytes, 16).to_bytes(len(hexbytes) // 2, 'big')
 
 
-def parse_serial_line(line: str) -> Generator[bytes, None, None]:
+def parse_serial_line(line: str) -> (int, bytes):
     m = line_regex.match(line)
 
     try:
+        addr = int(m.group('addr'), 16)
+        bstr = b''
         for chunk in m.group('data').split():
-            yield parse_hex_byte_string(chunk)
+            bstr += parse_hex_byte_string(chunk)
+
+        return addr, bstr
     except Exception:
         print("\n\nError caused by line: '{}'".format(line))
         raise
@@ -189,6 +193,7 @@ class CFEParserBase:
         while not self._readline().startswith(b"-----"):
             pass
         buf = b''
+        last_addr = -1
 
         while True:
             line = self._readline().strip()
@@ -197,7 +202,7 @@ class CFEParserBase:
                 continue
 
             # Spare area. Yield and skip to next page
-            if line.startswith(b"-----"):
+            if line.startswith(b"-----") and b'spare area' in line:
                 yield buf
                 buf = b''
 
@@ -205,15 +210,23 @@ class CFEParserBase:
                     pass
                 continue
 
+            # noinspection PyBroadException
             try:
-                for b in parse_serial_line(line.decode()):
-                    buf += b
-            except UnicodeDecodeError:
+                addr, buf = parse_serial_line(line.decode())
+                if addr <= last_addr:
+                    continue
+                while last_addr != -1 and addr - last_addr > 16:
+                    last_addr += 16
+                    self.printer.msg('Address {} missing, padding with zeroes'.format(hex(last_addr)))
+                    yield b'\0' * 16
+                last_addr = addr
+            except Exception:
                 traceback.print_exc()
 
     def read_page(self, block: int, page: int) -> bytes:
         buf = b''
         main_area_read = False
+        last_addr = -1
 
         self._read("dn {block} {page} 1\r\n".format(block=block, page=page).encode())
 
@@ -230,8 +243,7 @@ class CFEParserBase:
                 continue
 
             try:
-                for b in parse_serial_line(line.decode()):
-                    buf += b
+                addr, buf = parse_serial_line(line.decode())
             except UnicodeDecodeError:
                 traceback.print_exc()
 
