@@ -182,6 +182,9 @@ class CFEParserBase:
     def _readline(self, *a, **kw) -> bytes:
         raise NotImplementedError
 
+    def _file(self) -> BinaryIO:
+        raise NotImplementedError
+
     def wait_for_prompt(self):
         raise NotImplementedError
 
@@ -195,10 +198,10 @@ class CFEParserBase:
         buf = b''
         last_addr = -1
 
-        while True:
-            line = self._readline().strip()
+        for line in self._file():
+            line = line.strip()
 
-            if len(line) == 0:
+            if not line:
                 continue
 
             # Spare area. Yield and skip to next page
@@ -206,8 +209,11 @@ class CFEParserBase:
                 yield buf
                 buf = b''
 
-                while not self._readline().startswith(b"-----"):
-                    pass
+                for line in self._file():
+                    if line.startswith(b"-----"):
+                        break
+                else:
+                    break
                 continue
 
             # noinspection PyBroadException
@@ -313,6 +319,9 @@ class CFECommunicator(CFEParserBase):
     def _readline(self, *a, **kw) -> bytes:
         return self.ser.readline(*a, **kw)
 
+    def _file(self):
+        return self.ser
+
     def wait_for_prompt(self) -> None:
         self.printer.msg("Waiting for a prompt...")
         while True:
@@ -331,6 +340,9 @@ class CFEParser(CFEParserBase):
 
     def _read(self, *a, **kw) -> bytes:
         return self.input_file.read(*a, **kw)
+
+    def _file(self):
+        return self.input_file
 
     def _write(self, *a, **kw) -> int:
         return 0
@@ -449,11 +461,14 @@ def main():
             for page in gen:
                 pages_read += 1
                 output.write(page)
-                if type(c) == CFECommunicator or pages_read % 100 == 0:
+                if type(c) == CFECommunicator or pages_read % 200 == 0:
                     printer.print_progress(pages_read, pages)
+                    output.flush()
         except Exception:
             printer.print_progress(pages_read, pages)
+            output.flush()
             raise
+        output.flush()
 
     printer.print("\n\n")
 
