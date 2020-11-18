@@ -311,7 +311,11 @@ class CFECommunicator(CFEParserBase):
         self.ser = serial
 
     def _read(self, *a, **kw) -> bytes:
-        return self.ser.read(*a, **kw)
+        if not type(*a) is int:
+            self.ser.write(*a, **kw)
+            return self.ser.read(len(*a))
+        else:
+            return self.ser.read(*a, **kw)
 
     def _write(self, *a, **kw) -> int:
         return self.ser.write(*a, **kw)
