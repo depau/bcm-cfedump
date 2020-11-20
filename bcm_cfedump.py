@@ -249,7 +249,8 @@ class CFEParserBase:
                 continue
 
             try:
-                addr, buf = parse_serial_line(line.decode())
+                addr, buf_temp = parse_serial_line(line.decode())
+                buf += buf_temp
             except UnicodeDecodeError:
                 traceback.print_exc()
 
