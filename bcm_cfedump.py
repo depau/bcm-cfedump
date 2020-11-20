@@ -245,6 +245,22 @@ class CFEParserBase:
             if line.startswith(b"-----"):
                 break
 
+            # ignore Uncorrectable errors
+            if line.startswith(b"Uncorrectable ECC Error"):
+                continue
+
+            # ignore more errors
+            if line.startswith(b"nand_flash_read_buf(): Att"):
+                continue
+
+            if line.startswith(b"Error reading block"):
+                continue
+
+            #danitool begin: eat crashing line
+            if line.startswith(b"Correctable ECC Error detected"):
+                continue
+            #danitool end
+
             if len(line) == 0:
                 continue
 
