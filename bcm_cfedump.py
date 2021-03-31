@@ -245,11 +245,28 @@ class CFEParserBase:
             if line.startswith(b"-----"):
                 break
 
+            # ignore Uncorrectable errors
+            if line.startswith(b"Uncorrectable ECC Error"):
+                continue
+
+            # ignore more errors
+            if line.startswith(b"nand_flash_read_buf(): Att"):
+                continue
+
+            if line.startswith(b"Error reading block"):
+                continue
+
+            #danitool begin: eat crashing line
+            if line.startswith(b"Correctable ECC Error detected"):
+                continue
+            #danitool end
+
             if len(line) == 0:
                 continue
 
             try:
-                addr, buf = parse_serial_line(line.decode())
+                addr, buf_temp = parse_serial_line(line.decode())
+                buf += buf_temp
             except UnicodeDecodeError:
                 traceback.print_exc()
 
@@ -311,6 +328,9 @@ class CFECommunicator(CFEParserBase):
         self.ser = serial
 
     def _read(self, *a, **kw) -> bytes:
+        if not type(*a) is int:
+            self.ser.write(*a, **kw)
+            return self.ser.read(len(*a))
         return self.ser.read(*a, **kw)
 
     def _write(self, *a, **kw) -> int:
