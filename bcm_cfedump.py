@@ -152,7 +152,10 @@ class ProgressPrinter(PrettyPrinter):
             string += "[{}/s] ".format(format_size(speed))
 
             remaining = total - done
-            eta = int(remaining // speed)
+            try:
+                eta = int(remaining // speed)
+            except ZeroDivisionError:
+                eta = int(0)
 
             string += "[ETA: {}]".format(format_time(eta))
 
